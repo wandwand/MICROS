@@ -1,5 +1,6 @@
 ;=============================================================================
-; Rob√¥ Seguidor de Linha - PIC16F628A (C√≥digo Corrigido para MPLAB/mpasmx)
+; RobÙ Seguidor de Linha - PIC16F628A
+; Tarefa 2: Iniciar em marcaÁ„o, seguir linha, curvar na 1™ bifurcaÁ„o, parar na 2™
 ;=============================================================================
 
         LIST        p=16F628A
@@ -8,303 +9,200 @@
         __CONFIG _INTOSC_OSC_NOCLKOUT & _WDT_OFF & _PWRTE_OFF & _MCLRE_OFF & _BODEN_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
 
 ;=============================================================================
-; Defini√ß√£o de Vari√°veis
+; Vari·veis
 ;=============================================================================
-CBLOCK  0x70
-    AT0         ; Contador de atraso n√≠vel 1
-    AT1         ; Contador de atraso n√≠vel 2
-    AT2         ; Contador de atraso n√≠vel 3
-    FLAG        ; Vari√°vel de flag para controle (bit0 = primeira vez 11, bit1 = segunda vez 11)
-    TEMP        ; Vari√°vel tempor√°ria
+CBLOCK 0x70
+    AT0
+    AT1
+    AT2
+    FLAG
+    CONT11
 ENDC
 
-CONT    EQU     0x20    ; Contador de estados para detec√ß√£o de obst√°culos
-CURVA   EQU     0x21    ; Contador de intersec√ß√µes
+; Sensores
+S_ESQ    EQU 0      ; RB0
+S_FRENTE EQU 2      ; RB2
 
-; Sensores (bits de PORTB)
-S_ESQ      EQU 0        ; RB0 - sensor esquerdo
-S_DIR      EQU 1        ; RB1 - sensor direito
-S_FRENTE   EQU 2        ; RB2 - sensor do meio (centro)
+; Motores
+M_E      EQU 4
+M_D      EQU 5
 
-; Motores (bits de PORTB)
-M_E        EQU 4        ; Motor esquerdo frente (RB4)
-M_D        EQU 5        ; Motor direito frente (RB5)
-M_REV_E    EQU 6        ; Motor esquerdo reverso (RB6)
-M_REV_D    EQU 7        ; Motor direito reverso (RB7)
-
-; LEDs (bits de PORTA)
-LED00      EQU 0        ; RA0
-LED01      EQU 1        ; RA1
-LED10      EQU 2        ; RA2
-LED11      EQU 3        ; RA3
-LED_FIM    EQU 4        ; RA4 (open-drain no 16F628A - aten√ß√£o ao hardware)
-
-; Bits da vari√°vel FLAG
-PRIMEIRA_VEZ EQU 0      ; Bit 0 - primeira vez encontrou 11
-SEGUNDA_VEZ  EQU 1      ; Bit 1 - segunda vez encontrou 11
+; Bits de FLAG
+PRIMEIRA_VEZ EQU 0
+SEGUNDA_VEZ  EQU 1
 
 ;=============================================================================
 ; Vetores
 ;=============================================================================
-        ORG 0x000
-        GOTO INICIO
+ORG 0x000
+    GOTO INICIO
 
-        ORG 0x004
-        RETFIE
+ORG 0x004
+    RETFIE
 
 ;=============================================================================
-; Inicializa√ß√£o
+; InicializaÁ„o
 ;=============================================================================
 INICIO:
-        ; Configura TRISB: RB0-RB2 entradas, RB3-RB7 sa√≠das
-        BANKSEL TRISB
-        MOVLW   b'00000111'     ; 1=entrada, 0=saida
-        MOVWF   TRISB
+    BANKSEL TRISB
+    MOVLW   b'00000111'
+    MOVWF   TRISB           ; RB0, RB1, RB2 como entrada (sensores)
 
-        ; Configura TRISA: tudo sa√≠da (aten√ß√£o RA4 = open-drain)
-        BANKSEL TRISA
-        CLRF    TRISA
+    BANKSEL TRISA
+    CLRF TRISA              ; PORTA como saÌda
 
-        ; Desativa comparadores anal√≥gicos
-        BANKSEL CMCON
-        MOVLW   0x07
-        MOVWF   CMCON
+    BANKSEL CMCON
+    MOVLW 0x07
+    MOVWF CMCON             ; Desabilita comparadores
 
-        ; Zera portas
-        BANKSEL PORTA
-        CLRF    PORTA
+    BANKSEL PORTA
+    CLRF PORTA
 
-        BANKSEL PORTB
-        CLRF    PORTB
+    BANKSEL PORTB
+    CLRF PORTB
 
-        ; Inicializa vari√°veis
-        CLRF    CONT
-        CLRF    CURVA
-        CLRF    FLAG
+    CLRF FLAG
+    CLRF CONT11
 
 ;=============================================================================
-; Loop Principal
+; Aguardar inÌcio na marcaÁ„o (Figura 2.a)
+;=============================================================================
+AGUARDA_INICIO:
+    BTFSC PORTB, S_ESQ      ; Aguarda atÈ que o sensor ESQ esteja na linha
+    GOTO AGUARDA_INICIO
+    BTFSC PORTB, S_FRENTE   ; Aguarda atÈ que o sensor FRENTE esteja na linha
+    GOTO AGUARDA_INICIO
+    ; Ambos sensores fora da linha = marcaÁ„o detectada
+    CALL DELAY_PEQUENO      ; Pequeno delay para estabilizaÁ„o
+
+;=============================================================================
+; LOOP PRINCIPAL
 ;=============================================================================
 MAIN:
-        ; --- 1) CONDI√á√ÉO DE PARADA: AMBOS SENSORES LATERAIS ATIVOS ---
-        BANKSEL PORTB
-        BTFSS   PORTB, S_ESQ       ; se ESQ=0, continua seguindo
-        GOTO    SEGUE
-        BTFSS   PORTB, S_DIR       ; se DIR=0, continua seguindo
-        GOTO    SEGUE
-
-        ; Se chegou aqui: ambos sensores laterais = 1 ‚Üí PARAR
-PARAR:
-        BANKSEL PORTB
-        BCF     PORTB, M_E
-        BCF     PORTB, M_D
-        BCF     PORTB, M_REV_E
-        BCF     PORTB, M_REV_D
-        GOTO    PARAR              ; trava parado (la√ßo intencional)
+    CALL VERIFICA_11        ; Verifica bifurcaÁ„o
+    GOTO LOGICA_NORMAL      ; Segue linha normalmente
 
 ;=============================================================================
-; L√ìGICA PRINCIPAL DE SEGUIMENTO DE LINHA COM CONDI√á√ÉO ESPECIAL
+; VerificaÁ„o est·vel do padr„o 11 (bifurcaÁ„o)
 ;=============================================================================
-SEGUE:
-        BANKSEL PORTB
-        
-        ; --- Primeiro verifica condi√ß√£o especial: sensor esquerdo e meio = 11 ---
-        ; Verifica se sensor esquerdo = 1 E sensor meio = 1
-        BTFSS   PORTB, S_ESQ       ; Verifica se esquerdo = 1
-        GOTO    LOGICA_NORMAL      ; Se n√£o, vai para l√≥gica normal
-        
-        BTFSS   PORTB, S_FRENTE    ; Verifica se meio = 1
-        GOTO    LOGICA_NORMAL      ; Se n√£o, vai para l√≥gica normal
-        
-        ; --- Se chegou aqui: ESQUERDO=1 e MEIO=1 (condi√ß√£o 11) ---
-        
-        ; Verifica se j√° foi primeira vez
-        BANKSEL FLAG
-        BTFSS   FLAG, PRIMEIRA_VEZ
-        GOTO    PRIMEIRA_VEZ_11    ; Primeira vez encontrando 11
-        
-        ; Se j√° foi primeira vez, verifica se √© segunda vez
-        BTFSS   FLAG, SEGUNDA_VEZ
-        GOTO    SEGUNDA_VEZ_11     ; Segunda vez encontrando 11
-        
-        ; Se j√° foi segunda vez, continua parado
-        GOTO    PARAR
+VERIFICA_11:
+    BANKSEL PORTB
+    BTFSS PORTB, S_ESQ
+    GOTO RESETA_11
+    BTFSS PORTB, S_FRENTE
+    GOTO RESETA_11
 
-PRIMEIRA_VEZ_11:
-        ; Marca que encontrou primeira vez
-        BANKSEL FLAG
-        BSF     FLAG, PRIMEIRA_VEZ
-        
-        ; Vai para ajuste esquerda e espera at√© ver apenas o meio
-        CALL    AJUSTE_ESPERA_MEIO
-        
-        ; Volta para MAIN
-        GOTO    MAIN
+    INCF CONT11, F
+    MOVLW .4
+    CPFSEQ CONT11
+    GOTO LOGICA_NORMAL
 
-SEGUNDA_VEZ_11:
-        ; Marca que encontrou segunda vez
-        BANKSEL FLAG
-        BSF     FLAG, SEGUNDA_VEZ
-        
-        ; Para permanentemente
-        GOTO    PARAR
+    CLRF CONT11
+    GOTO TRATA_BIFURCACAO
 
+RESETA_11:
+    CLRF CONT11
+    RETURN
+
+;=============================================================================
+; Tratamento de bifurcaÁ„o (1™ ou 2™)
+;=============================================================================
+TRATA_BIFURCACAO:
+    BANKSEL FLAG
+    BTFSS FLAG, PRIMEIRA_VEZ
+    GOTO BIFURCACAO_1
+
+    BTFSS FLAG, SEGUNDA_VEZ
+    GOTO BIFURCACAO_2
+
+    GOTO PARAR
+
+BIFURCACAO_1:
+    BSF FLAG, PRIMEIRA_VEZ
+    ; Curva ‡ esquerda (ajuste se necess·rio)
+    BANKSEL PORTB
+    BCF PORTB, M_E
+    BSF PORTB, M_D
+    CALL DELAY_CURVA_LONGA
+    RETURN
+
+BIFURCACAO_2:
+    BSF FLAG, SEGUNDA_VEZ
+    ; AvanÁa um pouco antes de parar
+    CALL ANDAR_RETO
+    CALL DELAY_PEQUENO
+    CALL DELAY_PEQUENO
+    GOTO PARAR
+
+;=============================================================================
+; LÛgica normal de seguimento de linha
+;=============================================================================
 LOGICA_NORMAL:
-        BANKSEL PORTB
-        
-        ; --- 2) Linha sob o sensor central ‚Üí andar reto ---
-        BTFSC   PORTB, S_FRENTE
-        GOTO    ANDAR_RETO
+    BANKSEL PORTB
+    BTFSC PORTB, S_FRENTE
+    GOTO ANDAR_RETO
 
-        ; --- 3) Saiu da linha ‚Üí corrigir usando sensores laterais ---
-        BTFSC   PORTB, S_ESQ
-        GOTO    AJUSTE_ESQ
+    BTFSC PORTB, S_ESQ
+    GOTO AJUSTE_ESQ
 
-        BTFSC   PORTB, S_DIR
-        GOTO    AJUSTE_DIR
-
-        ; --- 4) Nenhum sensor detecta linha ‚Üí PERDEU_LINHA ---
-PERDEU_LINHA:
-        BANKSEL PORTB
-        BCF     PORTB, M_E        ; desliga motor esquerdo
-        BSF     PORTB, M_D        ; motor direito ligado ‚Üí curva para direita
-        
-        ; Verifica se durante a curva encontra condi√ß√£o 11 novamente
-        CALL    VERIFICA_11_DURANTE_CURVA
-        GOTO    MAIN
+    ; Perdeu linha: curva leve ‡ esquerda
+    BCF PORTB, M_E
+    BSF PORTB, M_D
+    GOTO MAIN
 
 ;=============================================================================
-; Subrotina: Verifica condi√ß√£o 11 durante a curva
-;=============================================================================
-VERIFICA_11_DURANTE_CURVA:
-        BANKSEL PORTB
-        ; Verifica se sensor esquerdo = 1 E sensor meio = 1
-        BTFSS   PORTB, S_ESQ       ; Verifica se esquerdo = 1
-        RETLW   0                  ; Se n√£o, retorna
-        
-        BTFSS   PORTB, S_FRENTE    ; Verifica se meio = 1
-        RETLW   0                  ; Se n√£o, retorna
-        
-        ; Se encontrou 11 durante a curva
-        ; Verifica se j√° foi primeira vez
-        BANKSEL FLAG
-        BTFSS   FLAG, PRIMEIRA_VEZ
-        GOTO    MARCA_PRIMEIRA_VEZ
-        
-        ; Se j√° foi primeira vez, marca segunda vez
-        BSF     FLAG, SEGUNDA_VEZ
-        GOTO    PARAR
-        
-MARCA_PRIMEIRA_VEZ:
-        BSF     FLAG, PRIMEIRA_VEZ
-        RETLW   0
-
-;=============================================================================
-; Subrotina: Ajuste esquerda e espera at√© ver apenas o meio
-;=============================================================================
-AJUSTE_ESPERA_MEIO:
-        BANKSEL PORTB
-        
-        ; Ajusta para esquerda
-        BCF     PORTB, M_E
-        BSF     PORTB, M_D
-        BCF     PORTB, M_REV_E
-        BCF     PORTB, M_REV_D
-        
-        ; Pequeno delay para iniciar movimento
-        CALL    DELAY_PEQUENO
-        
-ESPERA_MEIO_LOOP:
-        ; Verifica se esquerdo = 0 e meio = 1
-        BTFSC   PORTB, S_ESQ      ; Se esquerdo = 1, continua ajustando
-        GOTO    CONTINUA_AJUSTE
-        
-        BTFSS   PORTB, S_FRENTE   ; Se meio = 0, continua ajustando
-        GOTO    CONTINUA_AJUSTE
-        
-        ; Quando chega aqui: esquerdo=0 e meio=1
-        ; Para os motores
-        BCF     PORTB, M_E
-        BCF     PORTB, M_D
-        
-        ; Delay para estabiliza√ß√£o
-        CALL    DELAY_PEQUENO
-        
-        ; Verifica novamente para confirmar
-        BTFSC   PORTB, S_ESQ
-        GOTO    CONTINUA_AJUSTE
-        
-        BTFSS   PORTB, S_FRENTE
-        GOTO    CONTINUA_AJUSTE
-        
-        ; Confirma√ß√£o ok, retorna
-        RETLW   0
-
-CONTINUA_AJUSTE:
-        ; Continua ajustando para esquerda
-        BCF     PORTB, M_E
-        BSF     PORTB, M_D
-        GOTO    ESPERA_MEIO_LOOP
-
-;=============================================================================
-; Movimentos
+; Comandos de movimento
 ;=============================================================================
 ANDAR_RETO:
-        BANKSEL PORTB
-        BSF     PORTB, M_E
-        BSF     PORTB, M_D
-        BCF     PORTB, M_REV_E
-        BCF     PORTB, M_REV_D
-        GOTO    MAIN
+    BANKSEL PORTB
+    BSF PORTB, M_E
+    BSF PORTB, M_D
+    RETURN
 
 AJUSTE_ESQ:
-        BANKSEL PORTB
-        BCF     PORTB, M_E
-        BSF     PORTB, M_D
-        BCF     PORTB, M_REV_E
-        BCF     PORTB, M_REV_D
-        GOTO    MAIN
+    BANKSEL PORTB
+    BCF PORTB, M_E
+    BSF PORTB, M_D
+    RETURN
 
-AJUSTE_DIR:
-        BANKSEL PORTB
-        BSF     PORTB, M_E
-        BCF     PORTB, M_D
-        BCF     PORTB, M_REV_E
-        BCF     PORTB, M_REV_D
-        GOTO    MAIN
+PARAR:
+    BANKSEL PORTB
+    BCF PORTB, M_E
+    BCF PORTB, M_D
+    GOTO $                  ; Loop infinito (parada total)
 
 ;=============================================================================
-; Subrotinas de Delay
+; Delays (ajustar conforme necessidade)
 ;=============================================================================
 DELAY_PEQUENO:
-        MOVLW   .50
-        MOVWF   AT1
-DELAY_P1:
-        MOVLW   .100
-        MOVWF   AT0
-DELAY_P0:
-        DECFSZ  AT0, F
-        GOTO    DELAY_P0
-        DECFSZ  AT1, F
-        GOTO    DELAY_P1
-        RETURN
+    MOVLW .50
+    MOVWF AT1
+DP1:
+    MOVLW .100
+    MOVWF AT0
+DP0:
+    DECFSZ AT0,F
+    GOTO DP0
+    DECFSZ AT1,F
+    GOTO DP1
+    RETURN
 
-DELAY:
-        MOVLW   .100
-        MOVWF   AT2
-DELAY_LOOP2:
-        MOVLW   .100
-        MOVWF   AT1
-DELAY_LOOP1:
-        MOVLW   .10
-        MOVWF   AT0
-DELAY_LOOP0:
-        DECFSZ  AT0, F
-        GOTO    DELAY_LOOP0
-        DECFSZ  AT1, F
-        GOTO    DELAY_LOOP1
-        DECFSZ  AT2, F
-        GOTO    DELAY_LOOP2
-        RETURN
+DELAY_CURVA_LONGA:
+    MOVLW .150              ; Ajuste este valor para a curva
+    MOVWF AT2
+DL2:
+    MOVLW .200
+    MOVWF AT1
+DL1:
+    MOVLW .200
+    MOVWF AT0
+DL0:
+    DECFSZ AT0,F
+    GOTO DL0
+    DECFSZ AT1,F
+    GOTO DL1
+    DECFSZ AT2,F
+    GOTO DL2
+    RETURN
 
-        END
+END
