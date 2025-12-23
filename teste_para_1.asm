@@ -1,0 +1,230 @@
+INCLUDE <p16f628a.inc>
+__CONFIG _FOSC_INTOSCIO & _WDTE_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
+
+; ====================
+; VARIÁVEIS
+; ====================
+ESTADO_SENSORES    EQU 0x70    ; Estado dos sensores (PORTB)
+ESTADO_CHAVES      EQU 0x71    ; Estado das chaves (PORTA)
+CONTADOR_CURVAS    EQU 0x72    ; Quantidade de curvas realizadas
+CONTADOR_DELAY     EQU 0x73    ; Contador para delays
+
+; ====================
+; VETORES
+; ====================
+ORG 0x00
+GOTO INICIO
+ORG 0x04
+RETFIE
+
+; ====================
+; INICIALIZAÇÃO
+; ====================
+INICIO:
+    CLRF CONTADOR_CURVAS
+    
+    ; Configuração do comparador analógico
+    BANKSEL CMCON
+    MOVLW 0x07
+    MOVWF CMCON
+    
+    ; Configuração dos TRIS
+    BANKSEL TRISA
+    MOVLW B'00111100'     ; RA2-RA5 como entrada (chaves)
+    MOVWF TRISA
+    MOVLW B'00000111'     ; RB0-RB2 como entrada (sensores)
+    MOVWF TRISB
+    
+    ; Estado inicial do carro (anda reto)
+    BANKSEL PORTB
+    MOVLW B'00101000'     ; RB3 e RB5 ativos
+    MOVWF PORTB
+    MOVLW B'00000011'     ; RA0 e RA1 ativos
+    MOVWF PORTA
+
+; ====================
+; LOOP PRINCIPAL
+; ====================
+LOOP_PRINCIPAL:
+    CALL LER_SENSORES
+    CALL DECIDE_MOVIMENTO
+    CALL VERIFICA_CURVA
+    GOTO LOOP_PRINCIPAL
+
+; ====================
+; DECISÃO DE MOVIMENTO
+; ====================
+DECIDE_MOVIMENTO:
+    MOVLW B'00000010'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO ANDAR_RETO
+    
+    MOVLW B'00000100'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO AJUSTAR_ESQUERDA
+    
+    MOVLW B'00000001'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO AJUSTAR_DIREITA
+    RETURN
+
+; ====================
+; VERIFICAÇÃO DE CURVA
+; ====================
+VERIFICA_CURVA:
+    ; Verifica padrões de curva (todos os sensores ativos)
+    MOVLW B'00000111'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO EXECUTAR_CURVA
+    
+    MOVLW B'00000110'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO EXECUTAR_CURVA
+    
+    MOVLW B'00000011'
+    SUBWF ESTADO_SENSORES, W
+    BTFSC STATUS, Z
+    GOTO EXECUTAR_CURVA
+    
+    RETURN
+
+EXECUTAR_CURVA:
+    ; Verifica se já fez 2 curvas
+    MOVLW 0x02
+    SUBWF CONTADOR_CURVAS, W
+    BTFSC STATUS, Z
+    GOTO PARAR_CARRO
+    
+    ; Lê chaves para direção da curva
+    CALL LER_CHAVES
+    
+    ; Determina direção baseada no bit 2 das chaves (RA2)
+    BTFSC ESTADO_CHAVES, 2
+    GOTO CURVA_ESQUERDA
+    
+CURVA_DIREITA:
+    CALL VIRAR_DIREITA
+    RETURN
+
+CURVA_ESQUERDA:
+    CALL VIRAR_ESQUERDA
+    RETURN
+
+; ====================
+; SUBROTINAS DE ENTRADA
+; ====================
+LER_SENSORES:
+    BANKSEL PORTB
+    MOVLW B'00000111'
+    ANDWF PORTB, W
+    MOVWF ESTADO_SENSORES
+    RETURN
+
+LER_CHAVES:
+    MOVLW B'00111100'
+    ANDWF PORTA, W
+    MOVWF ESTADO_CHAVES
+    RETURN
+
+; ====================
+; SUBROTINAS DE SAÍDA
+; ====================
+ANDAR_RETO:
+    BANKSEL PORTA
+    MOVLW B'00000011'
+    MOVWF PORTA
+    MOVLW B'00101000'
+    MOVWF PORTB
+    RETURN
+
+AJUSTAR_ESQUERDA:
+    BANKSEL PORTA
+    MOVLW B'00000011'
+    MOVWF PORTA
+    MOVLW B'01001000'
+    MOVWF PORTB
+    RETURN
+
+AJUSTAR_DIREITA:
+    BANKSEL PORTA
+    MOVLW B'00000011'
+    MOVWF PORTA
+    MOVLW B'00110000'
+    MOVWF PORTB
+    RETURN
+
+VIRAR_ESQUERDA:
+    BANKSEL PORTA
+    MOVLW B'00000001'
+    MOVWF PORTA
+    MOVLW B'00100100'
+    MOVWF PORTB
+    
+    CALL DELAY_130ms
+    
+LOOP_ESQUERDA:
+    CALL LER_SENSORES
+    MOVLW B'00000010'
+    SUBWF ESTADO_SENSORES, W
+    BTFSS STATUS, Z
+    GOTO LOOP_ESQUERDA
+    INCF CONTADOR_CURVAS, F
+    RETURN
+
+VIRAR_DIREITA:
+    BANKSEL PORTA
+    MOVLW B'00000010'
+    MOVWF PORTA
+    MOVLW B'00100100'
+    MOVWF PORTB
+    
+    CALL DELAY_130ms
+    
+LOOP_DIREITA:
+    CALL LER_SENSORES
+    MOVLW B'00000010'
+    SUBWF ESTADO_SENSORES, W
+    BTFSS STATUS, Z
+    GOTO LOOP_DIREITA
+    INCF CONTADOR_CURVAS, F
+    RETURN
+
+; ====================
+; SUBROTINAS DE DELAY
+; ====================
+DELAY_130ms:
+    BANKSEL OPTION_REG
+    MOVLW B'11010111'
+    MOVWF OPTION_REG
+    BANKSEL TMR0
+    MOVLW 0x01
+    MOVWF TMR0
+    MOVLW 0x08
+    MOVWF CONTADOR_DELAY
+    
+DELAY_LOOP:
+    BTFSS INTCON, 2
+    GOTO DELAY_LOOP
+    BCF INTCON, 2
+    MOVLW 0x01
+    MOVWF TMR0
+    DECFSZ CONTADOR_DELAY, F
+    GOTO DELAY_LOOP
+    RETURN
+
+; ====================
+; FIM DO PROGRAMA
+; ====================
+PARAR_CARRO:
+    BANKSEL PORTB
+    MOVLW B'10000000'
+    MOVWF PORTB
+FIM:
+    GOTO FIM
+
+END
