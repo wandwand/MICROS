@@ -57,9 +57,66 @@ LOOP_PRINCIPAL:
     BTFSC STATUS, Z
     GOTO PARAR_CARRO    ; Se já tem 2 curvas, PARA IMEDIATAMENTE
     
+    ; === NOVA CONDIÇÃO ADICIONADA ===
+    ; Verifica padrões especiais antes da decisão normal
+    CALL VERIFICA_PADROES_ESPECIAIS
+    BTFSC STATUS, Z      ; Se Z=1, padrão especial foi encontrado e tratado
+    GOTO LOOP_PRINCIPAL  ; Volta ao loop principal
+    
     CALL DECIDE_MOVIMENTO
     CALL VERIFICA_CURVA
     GOTO LOOP_PRINCIPAL
+
+; ====================
+; NOVA ROTINA: VERIFICA PADRÕES ESPECIAIS
+; ====================
+VERIFICA_PADROES_ESPECIAIS:
+    ; Padrão 000 -> motores 11 (andar reto)
+    MOVLW B'00000000'
+    SUBWF ESTADO_SENSORES, W
+    BTFSS STATUS, Z
+    GOTO VERIFICA_001
+    
+    ; Padrão 000 encontrado
+    CALL ANDAR_RETO
+    BSF STATUS, Z        ; Seta flag Z=1 para indicar padrão tratado
+    RETURN
+
+VERIFICA_001:
+    ; Padrão 001 -> motores 10 (virar à direita)
+    MOVLW B'00000001'
+    SUBWF ESTADO_SENSORES, W
+    BTFSS STATUS, Z
+    GOTO VERIFICA_100
+    
+    ; Padrão 001 encontrado
+    BANKSEL PORTA
+    MOVLW B'00000010'    ; RA0=0, RA1=1 (motores 10)
+    MOVWF PORTA
+    MOVLW B'00110000'    ; RB5=1, RB4=1 (rodas à direita)
+    MOVWF PORTB
+    BSF STATUS, Z        ; Seta flag Z=1 para indicar padrão tratado
+    RETURN
+
+VERIFICA_100:
+    ; Padrão 100 -> motores 01 (virar à esquerda)
+    MOVLW B'00000100'
+    SUBWF ESTADO_SENSORES, W
+    BTFSS STATUS, Z
+    GOTO PADRAO_NAO_ENCONTRADO
+    
+    ; Padrão 100 encontrado
+    BANKSEL PORTA
+    MOVLW B'00000001'    ; RA0=1, RA1=0 (motores 01)
+    MOVWF PORTA
+    MOVLW B'01001000'    ; RB4=1, RB3=1 (rodas à esquerda)
+    MOVWF PORTB
+    BSF STATUS, Z        ; Seta flag Z=1 para indicar padrão tratado
+    RETURN
+
+PADRAO_NAO_ENCONTRADO:
+    BCF STATUS, Z        ; Limpa flag Z=0 para indicar padrão não encontrado
+    RETURN
 
 ; ====================
 ; DECISÃO DE MOVIMENTO
@@ -146,12 +203,12 @@ PADRAO_011:
     GOTO P011_ESQUERDA
     
 P011_DIREITA:
-    ; Caso 2 (RA2,RA3=01): 1ª curva padrão 011→motores 10
+    ; Caso 2 (RA2,RA3=01): 1ª curva padrão 011?motores 10
     CALL VIRAR_DIREITA
     RETURN
     
 P011_ESQUERDA:
-    ; Caso 4 (RA2,RA3=11): 1ª curva padrão 011→motores 10  
+    ; Caso 4 (RA2,RA3=11): 1ª curva padrão 011?motores 10  
     CALL VIRAR_DIREITA
     RETURN
 
@@ -162,12 +219,12 @@ PADRAO_110:
     GOTO P110_ESQUERDA
     
 P110_DIREITA:
-    ; Caso 1 (RA2,RA3=00): 1ª curva padrão 110→motores 01
+    ; Caso 1 (RA2,RA3=00): 1ª curva padrão 110?motores 01
     CALL VIRAR_ESQUERDA
     RETURN
     
 P110_ESQUERDA:
-    ; Caso 3 (RA2,RA3=10): 1ª curva padrão 110→motores 01
+    ; Caso 3 (RA2,RA3=10): 1ª curva padrão 110?motores 01
     CALL VIRAR_ESQUERDA
     RETURN
 
